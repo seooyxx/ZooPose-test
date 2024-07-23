@@ -1,3 +1,8 @@
+# Dataset / Cache / WorkDir
+data/
+work_dirs/
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
