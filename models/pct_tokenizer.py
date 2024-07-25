@@ -158,8 +158,11 @@ class Tokenizer(nn.Module):
             need_init_state_dict = {}
 
             for name, m in pretrained_state_dict['state_dict'].items():
-                if 'keypoint_head.tokenizer.' in name:
-                    name = name.replace('keypoint_head.tokenizer.', '')
+                # if 'keypoint_head.tokenizer.' in name:
+                #     name = name.replace('keypoint_head.tokenizer.', '')
+                if 'tokenizer.' in name:
+                    name = name.replace('tokenizer.', '')
+
                 if name in parameters_names or name in buffers_names:
                     need_init_state_dict[name] = m
             self.load_state_dict(need_init_state_dict, strict=True)
@@ -169,6 +172,121 @@ class Tokenizer(nn.Module):
                     'must check that the well-trained tokenizer '\
                     'is located in the correct path.')
 
+
+class CodebookDecoder(nn.Module):
+    ''' Codebook & Decoder Module for Tokenizer. '''
+    def __init__(self, tokenizer=None, num_joints=17):
+        super(CodebookDecoder, self).__init__()
+        
+        self.num_joints = num_joints
+        self.token_num = tokenizer['codebook']['token_num']
+        self.token_dim = tokenizer['codebook']['token_dim']
+
+        self.dec_num_blocks = tokenizer['decoder']['num_blocks']
+        self.dec_hidden_dim = tokenizer['decoder']['hidden_dim']
+        self.dec_token_inter_dim = tokenizer['decoder']['token_inter_dim']
+        self.dec_hidden_inter_dim = tokenizer['decoder']['hidden_inter_dim']
+        self.dec_dropout = tokenizer['decoder']['dropout']
+
+        self.token_num = tokenizer['codebook']['token_num']
+        self.token_class_num = tokenizer['codebook']['token_class_num']
+        self.token_dim = tokenizer['codebook']['token_dim']
+        self.decay = tokenizer['codebook']['ema_decay']
+
+        self.token_mlp = nn.Linear(self.token_num, self.num_joints)
+        self.decoder_start = nn.Linear(self.token_dim, self.dec_hidden_dim)
+
+        # self.layers
+        self.decoder_layers = nn.ModuleList(
+            [MixerLayer(self.dec_hidden_dim, self.dec_hidden_inter_dim,
+                self.num_joints, self.dec_token_inter_dim, 
+                self.dec_dropout) for _ in range(self.dec_num_blocks)])
+        self.layer_norm = nn.LayerNorm(self.dec_hidden_dim)
+
+        self.recover_embed = nn.Linear(self.dec_hidden_dim, 2)
+
+        ###### 
+
+        self.register_buffer('codebook', torch.empty(
+            self.token_class_num, self.token_dim))
+        self.codebook.data.normal_()
+
+        # decoder.ema_cluster_size # decoder.ema_w
+        self.register_buffer('ema_cluster_size', torch.zeros(
+            self.token_class_num))
+        self.register_buffer('ema_w', torch.empty(
+            self.token_class_num, self.token_dim))
+        self.ema_w.data.normal_()  
+
+
+    def forward(self, encode_feat, device, bs):
+
+        # need: encode_feat
+        # codebook
+        distances = torch.sum(encode_feat**2, dim=1, keepdim=True) \
+            + torch.sum(self.codebook**2, dim=1) \
+            - 2 * torch.matmul(encode_feat, self.codebook.t())
+        
+        # find the closest encoding indicies
+        encoding_indices = torch.argmin(distances, dim=1)
+        encodings = torch.zeros(
+            encoding_indices.shape[0], self.token_class_num, device=device)
+        encodings.scatter_(1, encoding_indices.unsqueeze(1), 1)
+
+        part_token_feat = torch.matmul(encodings, self.codebook)
+        part_token_feat = encode_feat + (part_token_feat - encode_feat).detach()
+
+        # return part_token_feat, encodings, encoding_indices
+        original_part_token_feat = part_token_feat.clone()
+
+        # decoding part, recover joints
+        part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
+        part_token_feat = part_token_feat.transpose(2,1)
+        part_token_feat = self.token_mlp(part_token_feat).transpose(2,1)
+        decode_feat = self.decoder_start(part_token_feat)
+
+        for num_layer in self.decoder_layers:
+            decode_feat = num_layer(decode_feat)
+        decode_feat = self.layer_norm(decode_feat)
+
+        recoverd_joints = self.recover_embed(decode_feat)
+
+        # return recovered joints
+        return original_part_token_feat, encodings, \
+            encoding_indices, recoverd_joints
+
+
+    def codebook_update(self, encodings, encode_feat, part_token_feat):
+        """ update codebook using EMA update """
+        
+        dw = torch.matmul(encodings.t(), encode_feat.detach())
+        
+        # sync across all process
+        n_encodings, n_dw = encodings.numel(), dw.numel()
+        encodings_shape, dw_shape = encodings.shape, dw.shape
+        combined = torch.cat((encodings.flatten(), dw.flatten()))
+
+        dist.all_reduce(combined) # math sum
+
+        sync_encodings, sync_dw = torch.split(combined, [n_encodings, n_dw])
+        sync_encodings, sync_dw = \
+                sync_encodings.view(encodings_shape), sync_dw.view(dw_shape)
+        
+        # update the EMA cluster size and codebook
+        self.ema_cluster_size = self.ema_cluster_size * self.decay + \
+                                (1 - self.decay) * torch.sum(sync_encodings, 0)
+        
+        n = torch.sum(self.ema_cluster_size.data)
+        self.ema_cluster_size = ((self.ema_cluster_size + 1e-5) 
+                                 / (n + self.token_class_num * 1e-5) * n)
+
+        self.ema_w = self.ema_w * self.decay + (1 - self.decay) * sync_dw
+        self.codebook = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+        
+        # calculate the loss
+        e_latent_loss = F.mse_loss(part_token_feat.detach(), encode_feat)
+
+        return e_latent_loss
 
 class TokenDecoder(nn.Module):
     def __init__(self, tokenizer=None, num_joints=17):

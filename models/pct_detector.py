@@ -42,7 +42,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         assert self.stage_pct in ["tokenizer", "classifier"]
        
         self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=keypoint_head['tokenizer'])
-        self.tokenizer.init_weights(pretrained=pretrained)
+        self.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
 
         self.flip_test = test_cfg.get('flip_test', True)
         self.dataset_name = test_cfg.get('dataset_name', 'AP10K')

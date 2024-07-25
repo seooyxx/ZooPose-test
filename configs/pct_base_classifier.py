@@ -1,10 +1,10 @@
 _base_ = ['./default_runtime.py', './ap10k.py']
 
-max_epochs = 50
-base_lr = 1e-3
+max_epochs = 200
+base_lr = 8e-4
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=1)
-randomness = dict(seed=21)
+#randomness = dict(seed=21)
 
 log_level = 'INFO'
 load_from = None
@@ -12,24 +12,22 @@ resume_from = None
 dist_params = dict(backend='nccl')
 workflow = [('train', 1)]
 find_unused_parameters=False
-checkpoint_config = dict(interval=5, create_symlink=False)
-evaluation = dict(interval=5, metric='mAP', save_best='AP')
+checkpoint_config = dict(interval=10, create_symlink=False)
+evaluation = dict(interval=10, metric='mAP', save_best='AP')
 
-optimizer = dict(type='AdamW', lr=8e-4, betas=(0.9, 0.999), weight_decay=0.05,
-                 constructor='SwinLayerDecayOptimizerConstructor',
-                 paramwise_cfg=dict(num_layers=[2, 2, 18, 2], layer_decay_rate=0.9,
-                                    no_decay_names=['relative_position_bias_table',
-                                                    'rpe_mlp',
-                                                    'logit_scale']))
-
-optimizer_config = dict(grad_clip=None)
 
 # optimizer
+# optimizer_config = dict(grad_clip=None)
+
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(type='AdamW', lr=base_lr, weight_decay=0.05),
-    paramwise_cfg=dict(
-        norm_decay_mult=0, bias_decay_mult=0, bypass_duplicate=True))
+    paramwise_cfg=dict(num_layers=[2, 2, 18, 2], layer_decay_rate=0.9,
+                                    no_decay_names=['relative_position_bias_table',
+                                                    'rpe_mlp',
+                                                    'logit_scale'])
+    )
+
 
 # codec settings
 codec = dict(
@@ -39,7 +37,6 @@ codec = dict(
     simcc_split_ratio=2.0,
     normalize=True,
     use_dark=False)
-
 
 # learning policy
 lr_config = dict(
@@ -79,14 +76,13 @@ data_cfg = dict(
     vis_thr=0.2,
     use_gt_bbox=True,
     det_bbox_thr=0.0,
-    bbox_file='data/coco/person_detection_results/'
-    'COCO_val2017_detections_AP_H_56_person.json',
+    bbox_file=None,
 )
 
 # model settings
 model = dict(
     type='PCT',
-    pretrained='weights/heatmap/swin_base.pth',
+    pretrained='weights/heatmap/swin_heatmap_best_AP_epoch_65.pth',
     backbone=dict(
         type='SwinV2TransformerRPE2FC',
         embed_dim=128,
@@ -132,9 +128,9 @@ model = dict(
             dropout=0.0),
         tokenizer=dict(
             guide_ratio=0.5,
-            ckpt="weights/tokenizer/swin_base.pth",
+            ckpt="weights/tokenizer/epoch_50.pth",
             encoder=dict(
-                drop_rate=0.2,
+                drop_rate=0.4, # default = 0.2
                 num_blocks=4,
                 hidden_dim=512,
                 token_inter_dim=64,
@@ -151,7 +147,7 @@ model = dict(
             codebook=dict(
                 token_num=34,
                 token_dim=512,
-                token_class_num=2048,
+                token_class_num=4096, # default: 2048
                 ema_decay=0.9,
             ),
             loss_keypoint=dict(
@@ -204,10 +200,6 @@ train_pipeline = [
 val_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='GetBBoxCenterScale'),
-    dict(type='RandomFlip', direction='horizontal'),
-    dict(type='RandomHalfBody'),
-    dict(
-        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
     dict(
         type='TopdownAffine', 
         input_size=codec['input_size'], 

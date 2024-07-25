@@ -1,6 +1,7 @@
 # Dataset / Cache / WorkDir
 data/
 work_dirs/
+weights/
 
 
 # Byte-compiled / optimized / DLL files
