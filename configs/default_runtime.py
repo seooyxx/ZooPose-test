@@ -1,4 +1,5 @@
-
+scope = 'mmpose'
+_scope_ = 'mmpose'
 default_scope = 'mmpose'
 
 # hooks

@@ -1,11 +1,10 @@
 _base_ = ['./default_runtime.py', './ap10k.py']
 
-dataset_type = 'AP10KDataset'
-data_mode = 'topdown'
-backend_args = dict(backend='local')
-
 max_epochs = 50
 base_lr = 1e-3
+
+train_cfg = dict(max_epochs=max_epochs, val_interval=1)
+randomness = dict(seed=21)
 
 log_level = 'INFO'
 load_from = None
@@ -24,6 +23,23 @@ optimizer = dict(type='AdamW', lr=8e-4, betas=(0.9, 0.999), weight_decay=0.05,
                                                     'logit_scale']))
 
 optimizer_config = dict(grad_clip=None)
+
+# optimizer
+optim_wrapper = dict(
+    type='OptimWrapper',
+    optimizer=dict(type='AdamW', lr=base_lr, weight_decay=0.05),
+    paramwise_cfg=dict(
+        norm_decay_mult=0, bias_decay_mult=0, bypass_duplicate=True))
+
+# codec settings
+codec = dict(
+    type='SimCCLabel', 
+    input_size=(256, 256),
+    sigma=(5.66, 5.66),
+    simcc_split_ratio=2.0,
+    normalize=True,
+    use_dark=False)
+
 
 # learning policy
 lr_config = dict(
@@ -146,20 +162,20 @@ model = dict(
             )),
     test_cfg=dict(
         flip_test=True,
-        dataset_name='COCO'))
+        dataset_name='AP10K'))
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='TopDownGetBboxCenterScale', padding=1.25),
-    dict(type='TopDownRandomShiftBboxCenter', shift_factor=0.16, prob=0.3),
-    dict(type='TopDownRandomFlip', flip_prob=0.5),
+    dict(type='GetBBoxCenterScale'),
+    dict(type='RandomFlip', direction='horizontal'),
+    dict(type='RandomHalfBody'),
     dict(
-        type='TopDownHalfBodyTransform',
-        num_joints_half_body=8,
-        prob_half_body=0.3),
+        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
     dict(
-        type='TopDownGetRandomScaleRotation', rot_factor=40, scale_factor=0.5),
-    dict(type='TopDownAffine'),
+        type='TopdownAffine', 
+        input_size=codec['input_size'], 
+        use_udp=True
+        ),
     dict(
         type='Albumentation',
         transforms=[
@@ -177,39 +193,36 @@ train_pipeline = [
                 random_offset=True,
                 p=0.5),
         ]),
-    dict(type='ToTensor'),
+  
+    dict(type='GenerateTarget', encoder=codec),
     dict(
-        type='NormalizeTensor',
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]),
-    dict(
-        type='Collect',
-        keys=['img', 'joints_3d', 'joints_3d_visible'],
-        meta_keys=[
-            'image_file', 'joints_3d', 'joints_3d_visible', 'center', 'scale',
-            'rotation', 'bbox_score', 'flip_pairs'
-        ]),
+        type='PackPoseInputs',
+        pack_transformed=True
+    )
 ]
 
 val_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='TopDownGetBboxCenterScale', padding=1.12),
-    dict(type='TopDownAffine'),
-    dict(type='ToTensor'),
+    dict(type='GetBBoxCenterScale'),
+    dict(type='RandomFlip', direction='horizontal'),
+    dict(type='RandomHalfBody'),
     dict(
-        type='NormalizeTensor',
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]),
+        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
     dict(
-        type='Collect',
-        keys=['img'],
-        meta_keys=[
-            'image_file', 'center', 'scale', 'rotation', 'bbox_score',
-            'flip_pairs'
-        ]),
+        type='TopdownAffine', 
+        input_size=codec['input_size'], 
+        use_udp=True
+        ),
+    dict(
+        type='PackPoseInputs',
+        pack_transformed=True
+    )
 ]
 
 test_pipeline = val_pipeline
+
+dataset_type = 'AP10KDataset'
+data_mode = 'topdown'
 
 # data loaders
 data_root = 'data/apt36k'
@@ -259,6 +272,48 @@ test_dataloader = dict(
         metainfo=dict(from_file='configs/ap10k.py')
     ))
 
+# evaluators
+val_evaluator = dict(
+    type='CocoMetric',
+    use_area=True,
+    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+test_evaluator = dict(
+    type='CocoMetric',
+    use_area=True,
+    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+
+val_cfg = dict()
+test_cfg = dict()
+
+
+# data_root = 'data/coco'
+# data = dict(
+#     samples_per_gpu=32,
+#     workers_per_gpu=2,
+#     val_dataloader=dict(samples_per_gpu=32),
+#     test_dataloader=dict(samples_per_gpu=32),
+#     train=dict(
+#         type='TopDownCocoDataset',
+#         ann_file=f'{data_root}/annotations/person_keypoints_train2017.json',
+#         img_prefix=f'{data_root}/images/train2017/',
+#         data_cfg=data_cfg,
+#         pipeline=train_pipeline,
+#         dataset_info={{_base_.dataset_info}}),
+#     val=dict(
+#         type='TopDownCocoDataset',
+#         ann_file=f'{data_root}/annotations/person_keypoints_val2017.json',
+#         img_prefix=f'{data_root}/images/val2017/',
+#         data_cfg=data_cfg,
+#         pipeline=val_pipeline,
+#         dataset_info={{_base_.dataset_info}}),
+#     test=dict(
+#         type='TopDownCocoDataset',
+#         ann_file=f'{data_root}/annotations/person_keypoints_val2017.json',
+#         img_prefix=f'{data_root}/images/val2017/',
+#         data_cfg=data_cfg,
+#         pipeline=val_pipeline,
+#         dataset_info={{_base_.dataset_info}})
+# )
 
 # fp16 settings
 fp16 = dict(loss_scale='dynamic')

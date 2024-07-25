@@ -26,22 +26,23 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
     def __init__(self,
                   backbone,
                   neck=None,
-                  head=None,
+                  keypoint_head=None,
                   train_cfg=None,
                   test_cfg=None,
                   data_preprocessor=None,
                   init_cfg=None,
-                  metainfo=None):
+                  metainfo=None,
+                  pretrained=None):
         super().__init__(data_preprocessor=data_preprocessor, init_cfg=init_cfg)
         
         self.train_cfg = train_cfg if train_cfg else {}
         self.test_cfg = test_cfg if test_cfg else {}
 
-        self.stage_pct = head['stage_pct']
+        self.stage_pct = keypoint_head['stage_pct']
         assert self.stage_pct in ["tokenizer", "classifier"]
        
-        self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=head['tokenizer'])
-        self.tokenizer.init_weights(pretrained="")
+        self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=keypoint_head['tokenizer'])
+        self.tokenizer.init_weights(pretrained=pretrained)
 
         self.flip_test = test_cfg.get('flip_test', True)
         self.dataset_name = test_cfg.get('dataset_name', 'AP10K')
@@ -101,11 +102,16 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
     def forward_test(self, img, joints, img_metas, data_samples): # -> SampleList
         """Defines the computation performed at every call when testing."""
-        assert img.size(0) == len(img_metas) # (batch_size, 3, 256, 256)
+        #print("Input Image Info:", len(img))
+        #print("Input img_metas Info:", img_metas)
+        if isinstance(img, list):
+            img = torch.cat(img, dim=0)
+        #print(img.shape)
+        #assert img.size(0) == len(img_metas) # (batch_size, 3, 256, 256)
 
         results = {}
 
-        batch_size, _, img_height, img_width = img.shape
+        batch_size, img_height, img_width = img.shape
         if batch_size > 1:
             assert 'id' in img_metas[0]
             

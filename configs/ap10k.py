@@ -42,7 +42,7 @@ dataset_info = dict(
         dict(
             name='L_Elbow',
             id=6,
-            color=[51, 153, 255],
+            color=[51, 153, 255], 
             type='upper',
             swap='R_Elbow'),
         7:
