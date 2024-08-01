@@ -11,12 +11,13 @@ from typing import Optional
 from mmpose.registry import MODELS
 from mmpose.utils.typing import (ConfigType, InstanceList, OptConfigType,
                                  OptMultiConfig, PixelDataList, SampleList)
-
+from mmpose.models import builder
 from mmpose.models.pose_estimators.base import BasePoseEstimator
 from mmengine.model.base_model import BaseModel
 from mmpose.models.data_preprocessors import PoseDataPreprocessor
 
 from .pct_tokenizer import Tokenizer ## PCT tokenizer for STAGE I
+from models import build_backbone, build_head
 
 from mmengine.structures import InstanceData, PixelData
 
@@ -27,7 +28,6 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                   backbone,
                   neck=None,
                   keypoint_head=None,
-                  train_cfg=None,
                   test_cfg=None,
                   data_preprocessor=None,
                   init_cfg=None,
@@ -35,7 +35,6 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                   pretrained=None):
         super().__init__(data_preprocessor=data_preprocessor, init_cfg=init_cfg)
         
-        self.train_cfg = train_cfg if train_cfg else {}
         self.test_cfg = test_cfg if test_cfg else {}
 
         self.stage_pct = keypoint_head['stage_pct']
@@ -44,20 +43,33 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=keypoint_head['tokenizer'])
         self.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
 
+        if self.stage_pct == "classifier":
+            # For training classifier
+            self.keypoint_head = build_head(keypoint_head)
+            self.keypoint_head.init_weights()
+            self.keypoint_head.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
+            
+            # backbone is only needed for training classifier
+            self.backbone = build_backbone(backbone)
+            self.backbone.init_weights(pretrained)
+
+
         self.flip_test = test_cfg.get('flip_test', True)
         self.dataset_name = test_cfg.get('dataset_name', 'AP10K')
 
-
     def forward(self, inputs, data_samples, mode: str = 'tensor'): # -> ForwardResults:
+        print(f'Input Image test: {type(inputs), len(inputs)}')
+        #print(f'Input original: {inputs}')
            
         DEVICE = next(self.parameters()).device
+        if isinstance(inputs, list):
+            inputs = torch.stack(inputs, dim=0).to(DEVICE)  # Stack inputs along the batch dimension
+
+        if inputs.dtype != torch.float32:
+            inputs = inputs.float()  # Ensure inputs are float
+        print(f'Stacked Input shape: {type(inputs)}, {inputs.shape}')
 
         img_metas, joints_3d, joints_3d_visible = [], [], []
-
-
-        ## 기존 PCT 데이터 형식으로 처리하기 위한 코드이며, (NEED : img_metas, joints_3d, joints_visible)
-        ## 수정 시 그대로 data_samples에서 필요한 데이터들 꺼내 써도 될 것 같음
-        ## 카테고리 정보 등은 metainfo에 있음
 
         for sample in data_samples:
             img_metas.append(sample.metainfo)
@@ -71,58 +83,71 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         joints = torch.cat((joints_3d, joints_3d_visible), dim=-1)
 
         if mode == 'loss':
-            return self.forward_train(joints, img_metas)
+            return self.forward_train(inputs, joints, img_metas)
         elif mode == 'predict':
             return self.forward_test(inputs, joints, img_metas, data_samples)
         else:
             raise ValueError(f"Unsupported mode: {mode}")
 
-    def forward_train(self, joints, img_metas):
+    def forward_train(self, inputs, joints, img_metas):
         """Defines the computation performed at every call when training."""
 
-        # tokenizer
-        output_joints, cls_label, e_latent_loss = self.tokenizer(joints, train=True)
+        if self.stage_pct == "classifier":
+            output = None if self.stage_pct == "tokenizer" else self.backbone(inputs)
+            extra_output = None # if not self.image_guide else self.extra_backbone(img)
+            p_logits, p_joints, g_logits, e_latent_loss = self.keypoint_head(output, extra_output, joints)
 
-        losses = dict()
+            losses = dict()
+            keypoint_losses = self.keypoint_head.get_loss(p_logits, p_joints, g_logits, joints)
+            losses.update(keypoint_losses)
 
-        keypoint_losses = self.tokenizer.get_loss(output_joints, joints, e_latent_loss)
-        losses.update(keypoint_losses)
+            topk = (1,2,5)
+            keypoint_accuracy = self.get_class_accuracy(p_logits, g_logits, topk)
+            kpt_accs = {}
+            for i in range(len(topk)):
+                kpt_accs['top%s-acc' % str(topk[i])] \
+                    = keypoint_accuracy[i]
+            losses.update(kpt_accs)            
+
+        elif self.stage_pct == "tokenizer":
+            # tokenizer
+            output_joints, cls_label, e_latent_loss = self.tokenizer(joints, train=True)
+
+            losses = dict()
+
+            keypoint_losses = self.tokenizer.get_loss(output_joints, joints, e_latent_loss)
+            losses.update(keypoint_losses)
         return losses
 
-    # def get_class_accuracy(self, output, target, topk):
+    def get_class_accuracy(self, output, target, topk):
         
-    #     maxk = max(topk)
-    #     batch_size = target.size(0)
-    #     _, pred = output.topk(maxk, 1, True, True)
-    #     pred = pred.t()
-    #     correct = pred.eq(target.reshape(1, -1).expand_as(pred))
-    #     return [
-    #         correct[:k].reshape(-1).float().sum(0) \
-    #             * 100. / batch_size for k in topk]
+        maxk = max(topk)
+        batch_size = target.size(0)
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.reshape(1, -1).expand_as(pred))
+        return [
+            correct[:k].reshape(-1).float().sum(0) \
+                * 100. / batch_size for k in topk]
 
     def forward_test(self, img, joints, img_metas, data_samples): # -> SampleList
         """Defines the computation performed at every call when testing."""
-        #print("Input Image Info:", len(img))
-        #print("Input img_metas Info:", img_metas)
-        if isinstance(img, list):
-            img = torch.cat(img, dim=0)
-        #print(img.shape)
-        #assert img.size(0) == len(img_metas) # (batch_size, 3, 256, 256)
-
+        assert img.size(0) == len(img_metas)  # Ensure img size matches img_metas length
         results = {}
 
-        batch_size, img_height, img_width = img.shape
+        batch_size, _, img_height, img_width = img.shape
         if batch_size > 1:
             assert 'id' in img_metas[0]
             
-        # output = None if self.stage_pct == "tokenizer" \
-        #     else self.backbone(img) 
+        output = None if self.stage_pct == "tokenizer" else self.backbone(img) 
+        extra_output = None
         # extra_output = self.extra_backbone(img) \
         #     if self.image_guide and self.stage_pct == "tokenizer" else None
         
-        p_joints, _, _ = self.tokenizer(joints, train=False)
-        score_pose = joints[:,:,2:] #if self.stage_pct == "tokenizer" else encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
-
+        p_joints, encoding_scores = self.keypoint_head(output, extra_output, joints, train=False)
+        score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
+            encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
+        
         if self.flip_test:
             FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
                     'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
@@ -130,14 +155,13 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                     'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],\
                     'AP10K':[1, 0, 2, 3, 4, 8, 9, 10, 5, 6, 7, 14, 15, 16, 11, 12, 13]}
 
-            # img_flipped = img.flip(3)
+            img_flipped = img.flip(3)
     
-            # # features_flipped = None if self.stage_pct == "tokenizer" \
-            # #     else self.backbone(img_flipped) 
-            # # extra_output_flipped = self.extra_backbone(img_flipped) \
-            # #     if self.image_guide and self.stage_pct == "tokenizer" else None
-
-            # features_flipped, extra_output_flipped = None, None
+            features_flipped = None if self.stage_pct == "tokenizer" \
+                else self.backbone(img_flipped) 
+            extra_output_flipped = None 
+            # extra_output_flipped = self.extra_backbone(img_flipped) \
+            #     if self.image_guide and self.stage_pct == "tokenizer" else None
 
             if joints is not None:
                 joints_flipped = joints.clone()
@@ -146,16 +170,15 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             else:
                 joints_flipped = None
 
-            p_joints_f, _, _ = self.tokenizer(joints, train=False)
-                
-            # p_joints_f, encoding_scores_f = \
-            #     self.head(features_flipped, \
-            #         extra_output_flipped, joints_flipped, train=False)
+            p_joints_f, encoding_scores_f = \
+                self.keypoint_head(features_flipped, \
+                    extra_output_flipped, joints_flipped, train=False)
 
             p_joints_f = p_joints_f[:,FLIP_INDEX[self.dataset_name],:]
             p_joints_f[:,:,0] = img.shape[-1] - 1 - p_joints_f[:,:,0]
 
-            score_pose_f = joints[:,:,2:] # if self.stage_pct == "tokenizer" else encoding_scores_f.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
+            score_pose_f = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
+                encoding_scores_f.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
             p_joints = (p_joints + p_joints_f)/2.0
             score_pose = (score_pose + score_pose_f)/2.0
@@ -180,17 +203,28 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             if bbox_ids is not None:
                 bbox_ids.append(img_metas[i]['id'])
 
-        recovered_joints = p_joints.detach().cpu().numpy()
-        # score_pose = score_pose.detach().cpu().numpy()
+        p_joints = p_joints.cpu().numpy()
+        score_pose = score_pose.cpu().numpy()
+        for i in range(p_joints.shape[0]):
+            p_joints[i] = transform_preds(
+                p_joints[i], c[i], s[i], [img.shape[-1], img.shape[-2]], use_udp=False)
+        
+        all_preds = np.zeros((batch_size, p_joints.shape[1], 3), dtype=np.float32)
+        all_boxes = np.zeros((batch_size, 6), dtype=np.float32)
+        all_preds[:, :, 0:2] = p_joints
+        all_preds[:, :, 2:3] = score_pose
+        all_boxes[:, 0:2] = c[:, 0:2]
+        all_boxes[:, 2:4] = s[:, 0:2]
+        all_boxes[:, 4] = np.prod(s * 200.0, axis=1)
+        all_boxes[:, 5] = score
 
-        ## evaluation을 위해 data_samples에 prediction 추가
-        if isinstance(recovered_joints, tuple):
-            batch_pred_instances, batch_pred_fields = recovered_joints
-        else:
-            batch_pred_instances = recovered_joints
-            batch_pred_fields = None
-
-        results = self.add_pred_to_datasample(batch_pred_instances, batch_pred_fields, data_samples)
+        final_preds = {}
+        final_preds['preds'] = all_preds
+        final_preds['boxes'] = all_boxes
+        final_preds['image_paths'] = image_paths
+        final_preds['bbox_ids'] = bbox_ids
+        results.update(final_preds)
+        results['output_heatmap'] = None
 
         return results
 
@@ -280,3 +314,48 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
         return batch_data_samples
     
+def transform_preds(coords, center, scale, output_size, use_udp=False):
+    """Get final keypoint predictions from heatmaps and apply scaling and
+    translation to map them back to the image.
+
+    Note:
+        num_keypoints: K
+
+    Args:
+        coords (np.ndarray[K, ndims]):
+
+            * If ndims=2, corrds are predicted keypoint location.
+            * If ndims=4, corrds are composed of (x, y, scores, tags)
+            * If ndims=5, corrds are composed of (x, y, scores, tags,
+              flipped_tags)
+
+        center (np.ndarray[2, ]): Center of the bounding box (x, y).
+        scale (np.ndarray[2, ]): Scale of the bounding box
+            wrt [width, height].
+        output_size (np.ndarray[2, ] | list(2,)): Size of the
+            destination heatmaps.
+        use_udp (bool): Use unbiased data processing
+
+    Returns:
+        np.ndarray: Predicted coordinates in the images.
+    """
+    assert coords.shape[1] in (2, 4, 5)
+    assert len(center) == 2
+    assert len(scale) == 2
+    assert len(output_size) == 2
+
+    # Recover the scale which is normalized by a factor of 200.
+    scale = scale * 200.0
+
+    if use_udp:
+        scale_x = scale[0] / (output_size[0] - 1.0)
+        scale_y = scale[1] / (output_size[1] - 1.0)
+    else:
+        scale_x = scale[0] / output_size[0]
+        scale_y = scale[1] / output_size[1]
+
+    target_coords = coords.copy()
+    target_coords[:, 0] = coords[:, 0] * scale_x + center[0] - scale[0] * 0.5
+    target_coords[:, 1] = coords[:, 1] * scale_y + center[1] - scale[1] * 0.5
+
+    return target_coords
