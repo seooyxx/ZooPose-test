@@ -82,7 +82,7 @@ data_cfg = dict(
 # model settings
 model = dict(
     type='PCT',
-    pretrained='weights/heatmap/swin_heatmap_best_AP_epoch_65.pth',
+    pretrained='weights/heatmap/swin_base_heatmap.pth',
     backbone=dict(
         type='SwinV2TransformerRPE2FC',
         embed_dim=128,
@@ -111,6 +111,7 @@ model = dict(
         type='PCT_Head',
         stage_pct='classifier',
         in_channels=1024,
+        out_channels=17,
         image_size=data_cfg['image_size'],
         num_joints=channel_cfg['num_output_channels'],
         loss_keypoint=dict(
@@ -166,12 +167,13 @@ train_pipeline = [
     dict(type='RandomFlip', direction='horizontal'),
     dict(type='RandomHalfBody'),
     dict(
-        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
+        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=40),
     dict(
         type='TopdownAffine', 
         input_size=codec['input_size'], 
         use_udp=True
         ),
+    dict(type='mmdet.YOLOXHSVRandomAug'),
     dict(
         type='Albumentation',
         transforms=[
@@ -190,12 +192,13 @@ train_pipeline = [
                 p=0.5),
         ]),
   
-    dict(type='GenerateTarget', encoder=codec),
+    # dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
     )
 ]
+
 
 val_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -205,6 +208,7 @@ val_pipeline = [
         input_size=codec['input_size'], 
         use_udp=True
         ),
+    # dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
@@ -220,7 +224,7 @@ data_mode = 'topdown'
 data_root = 'data/apt36k'
 train_dataloader = dict(
     batch_size=32,
-    num_workers=10,
+    num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
@@ -234,7 +238,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=32,
-    num_workers=10,
+    num_workers=8,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
@@ -250,7 +254,7 @@ val_dataloader = dict(
 
 test_dataloader = dict(
     batch_size=32,
-    num_workers=10,
+    num_workers=8,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
