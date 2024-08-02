@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from mmengine.model import constant_init
 from mmengine.model import normal_init
 from mmpose.models.builder import build_loss
+from mmpose.models.heads.base_head import BaseHead
 from mmpose.models.heads.heatmap_heads import HeatmapHead
 from mmpose.models.builder import HEADS
 
@@ -18,7 +19,7 @@ from .modules import MixerLayer, FCBlock, BasicBlock
 
 
 @HEADS.register_module()
-class PCT_Head(HeatmapHead):
+class PCT_Head(nn.Module):
     """ Head of Pose Compositional Tokens.
         paper ref: Zigang Geng et al. "Human Pose as
             Compositional Tokens"
@@ -57,7 +58,7 @@ class PCT_Head(HeatmapHead):
                  cls_head=None,
                  tokenizer=None,
                  loss_keypoint=None,):
-        super().__init__(in_channels=in_channels, out_channels=out_channels)
+        super().__init__()
 
         self.image_size = image_size
         self.stage_pct = stage_pct
@@ -97,10 +98,10 @@ class PCT_Head(HeatmapHead):
                 self.hidden_dim, self.token_class_num)
         
         self.tokenizer = Tokenizer(
-            stage_pct=stage_pct, tokenizer=tokenizer, num_joints=num_joints,
-            guide_ratio=self.guide_ratio, guide_channels=in_channels,)
+            stage_pct=stage_pct, tokenizer=tokenizer, num_joints=num_joints)
 
         self.loss = build_loss(loss_keypoint)
+        print(f'loss: {self.loss}')
 
     def get_loss(self, p_logits, p_joints, g_logits, joints):
         """Calculate loss for training classifier.
@@ -123,8 +124,7 @@ class PCT_Head(HeatmapHead):
 
         losses = dict()
         
-        losses['token_loss'], losses['kpt_loss'] = self.loss(\
-            p_logits, p_joints, g_logits, joints)
+        losses['token_loss'], losses['kpt_loss'] = self.loss(p_logits, p_joints, g_logits, joints)
 
         unused_losses = []
         for name, loss in losses.items():

@@ -58,7 +58,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         self.dataset_name = test_cfg.get('dataset_name', 'AP10K')
 
     def forward(self, inputs, data_samples, mode: str = 'tensor'): # -> ForwardResults:
-        print(f'Input Image test: {type(inputs), len(inputs)}')
+        #print(f'Input Image test: {type(inputs), len(inputs)}')
         #print(f'Input original: {inputs}')
            
         DEVICE = next(self.parameters()).device
@@ -67,7 +67,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
         if inputs.dtype != torch.float32:
             inputs = inputs.float()  # Ensure inputs are float
-        print(f'Stacked Input shape: {type(inputs)}, {inputs.shape}')
+        #print(f'Stacked Input shape: {type(inputs)}, {inputs.shape}')
 
         img_metas, joints_3d, joints_3d_visible = [], [], []
 

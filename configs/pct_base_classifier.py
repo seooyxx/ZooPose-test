@@ -82,7 +82,7 @@ data_cfg = dict(
 # model settings
 model = dict(
     type='PCT',
-    pretrained='weights/heatmap/swin_base_heatmap.pth',
+    pretrained='weights/heatmap/swin_heatmap_best_AP_epoch_65.pth',
     backbone=dict(
         type='SwinV2TransformerRPE2FC',
         embed_dim=128,

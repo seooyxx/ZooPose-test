@@ -983,7 +983,7 @@ class PatchEmbed(nn.Module):
             x = F.pad(x, (0, self.patch_size[1] - W % self.patch_size[1]))
         if H % self.patch_size[0] != 0:
             x = F.pad(x, (0, 0, 0, self.patch_size[0] - H % self.patch_size[0]))
-        print(f'x : {x}, type(x): {type(x)}, x[0] : {type(x[0])}, x[1] : {type(x[1])}, x[2] : {type(x[2])}, x[3] : {type(x[3])}')
+        #print(f'x : {x}, type(x): {type(x)}, x[0] : {type(x[0])}, x[1] : {type(x[1])}, x[2] : {type(x[2])}, x[3] : {type(x[3])}')
         x = self.proj(x)  # B C Wh Ww
         if self.norm is not None:
             Wh, Ww = x.size(2), x.size(3)
