@@ -49,15 +49,12 @@ class CodebookDecoder(nn.Module):
 
         ###### 
 
-        self.register_buffer('codebook', torch.empty(
-            self.token_class_num, self.token_dim))
+        self.register_buffer('codebook', torch.empty(self.token_class_num, self.token_dim))
         self.codebook.data.normal_()
 
         # decoder.ema_cluster_size # decoder.ema_w
-        self.register_buffer('ema_cluster_size', torch.zeros(
-            self.token_class_num))
-        self.register_buffer('ema_w', torch.empty(
-            self.token_class_num, self.token_dim))
+        self.register_buffer('ema_cluster_size', torch.zeros(self.token_class_num))
+        self.register_buffer('ema_w', torch.empty(self.token_class_num, self.token_dim))
         self.ema_w.data.normal_()  
 
 
@@ -119,8 +116,7 @@ class CodebookDecoder(nn.Module):
                                 (1 - self.decay) * torch.sum(sync_encodings, 0)
         
         n = torch.sum(self.ema_cluster_size.data)
-        self.ema_cluster_size = ((self.ema_cluster_size + 1e-5) 
-                                 / (n + self.token_class_num * 1e-5) * n)
+        self.ema_cluster_size = ((self.ema_cluster_size + 1e-5) / (n + self.token_class_num * 1e-5) * n)
 
         self.ema_w = self.ema_w * self.decay + (1 - self.decay) * sync_dw
         self.codebook = self.ema_w / self.ema_cluster_size.unsqueeze(1)
@@ -129,7 +125,6 @@ class CodebookDecoder(nn.Module):
         e_latent_loss = F.mse_loss(part_token_feat.detach(), encode_feat)
 
         return e_latent_loss
-
 
 @HEADS.register_module()
 class Tokenizer(nn.Module):
@@ -266,17 +261,47 @@ class Tokenizer(nn.Module):
         if os.path.isfile(pretrained):
             assert (self.stage_pct == "classifier"), \
                 "Training tokenizer does not need to load model"
+
             pretrained_state_dict = torch.load(pretrained, 
                             map_location=lambda storage, loc: storage)
 
             need_init_state_dict = {}
 
-            for name, m in pretrained_state_dict['state_dict'].items():
-                if 'keypoint_head.tokenizer.' in name:
-                    name = name.replace('keypoint_head.tokenizer.', '')
+            key_mapping = {
+                "codebook.codebook": "decoder.codebook",
+                "codebook.ema_cluster_size": "decoder.ema_cluster_size",
+                "codebook.ema_w": "decoder.ema_w",
+                "decoder.decoder_token_mlp.weight": "decoder.token_mlp.weight",
+                "decoder.decoder_token_mlp.bias": "decoder.token_mlp.bias",
+                "decoder.decoder_layer_norm.weight": "decoder.layer_norm.weight",
+                "decoder.decoder_layer_norm.bias": "decoder.layer_norm.bias",
+            }
+
+            for i in range(1):  # 1 layers
+                key_mapping[f"decoder.decoder.{i}.layernorm1.weight"] = f"decoder.decoder_layers.{i}.layernorm1.weight"
+                key_mapping[f"decoder.decoder.{i}.layernorm1.bias"] = f"decoder.decoder_layers.{i}.layernorm1.bias"
+                key_mapping[f"decoder.decoder.{i}.MLP_token.ff.0.weight"] = f"decoder.decoder_layers.{i}.MLP_token.ff.0.weight"
+                key_mapping[f"decoder.decoder.{i}.MLP_token.ff.0.bias"] = f"decoder.decoder_layers.{i}.MLP_token.ff.0.bias"
+                key_mapping[f"decoder.decoder.{i}.MLP_token.ff.3.weight"] = f"decoder.decoder_layers.{i}.MLP_token.ff.3.weight"
+                key_mapping[f"decoder.decoder.{i}.MLP_token.ff.3.bias"] = f"decoder.decoder_layers.{i}.MLP_token.ff.3.bias"
+                key_mapping[f"decoder.decoder.{i}.layernorm2.weight"] = f"decoder.decoder_layers.{i}.layernorm2.weight"
+                key_mapping[f"decoder.decoder.{i}.layernorm2.bias"] = f"decoder.decoder_layers.{i}.layernorm2.bias"
+                key_mapping[f"decoder.decoder.{i}.MLP_channel.ff.0.weight"] = f"decoder.decoder_layers.{i}.MLP_channel.ff.0.weight"
+                key_mapping[f"decoder.decoder.{i}.MLP_channel.ff.0.bias"] = f"decoder.decoder_layers.{i}.MLP_channel.ff.0.bias"
+                key_mapping[f"decoder.decoder.{i}.MLP_channel.ff.3.weight"] = f"decoder.decoder_layers.{i}.MLP_channel.ff.3.weight"
+                key_mapping[f"decoder.decoder.{i}.MLP_channel.ff.3.bias"] = f"decoder.decoder_layers.{i}.MLP_channel.ff.3.bias"
+                
+            for name, param in pretrained_state_dict['state_dict'].items():
+                if 'tokenizer.' in name:
+                    name = name.replace('tokenizer.', '')
+                if name in key_mapping:
+                    name = key_mapping[name]
+
                 if name in parameters_names or name in buffers_names:
-                    need_init_state_dict[name] = m
+                    need_init_state_dict[name] = param
+
             self.load_state_dict(need_init_state_dict, strict=True)
+
         else:
             if self.stage_pct == "classifier":
                 print('If you are training a classifier, '\
