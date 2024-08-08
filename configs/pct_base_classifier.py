@@ -1,7 +1,7 @@
 _base_ = ['./default_runtime.py', './ap10k.py']
 
 max_epochs = 200
-base_lr = 8e-4
+base_lr = 8e-2
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=1)
 #randomness = dict(seed=21)
@@ -192,7 +192,7 @@ train_pipeline = [
                 p=0.5),
         ]),
   
-    # dict(type='GenerateTarget', encoder=codec),
+    dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
@@ -208,7 +208,7 @@ val_pipeline = [
         input_size=codec['input_size'], 
         use_udp=True
         ),
-    # dict(type='GenerateTarget', encoder=codec),
+    dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
@@ -221,7 +221,7 @@ dataset_type = 'AP10KDataset'
 data_mode = 'topdown'
 
 # data loaders
-data_root = 'data/apt36k'
+data_root = 'data/APTv2'
 train_dataloader = dict(
     batch_size=32,
     num_workers=8,
@@ -230,7 +230,7 @@ train_dataloader = dict(
     dataset=dict(
         type=dataset_type, 
         data_root=data_root,
-        ann_file='annotations/train_annotations_1.json',
+        ann_file='annotations/train_annotations.json',
         data_prefix=dict(img=''),
         pipeline=train_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
@@ -238,14 +238,14 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=32,
-    num_workers=8,
+    num_workers=2,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
+        ann_file='annotations/val_annotations.json',
         data_prefix=dict(img=''),
         test_mode=True,
         pipeline=val_pipeline,
@@ -254,14 +254,14 @@ val_dataloader = dict(
 
 test_dataloader = dict(
     batch_size=32,
-    num_workers=8,
+    num_workers=2,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
+        ann_file='annotations/test_annotations.json',
         data_prefix=dict(img=''),
         test_mode=True,
         pipeline=val_pipeline,
@@ -269,18 +269,31 @@ test_dataloader = dict(
     ))
 
 # evaluators
+# val_evaluator = dict(
+#     _scope_="mmdet",
+#     type='CocoMetric',
+#     metric='bbox',
+#     ann_file=f'{data_root}/annotations/val_annotations_1.json')
+
+# test_evaluator = dict(
+#     _scope_="mmdet",
+#     type='CocoMetric',
+#     metric='bbox',
+#     ann_file=f'{data_root}/annotations/val_annotations_1.json')
+
 val_evaluator = dict(
-    type='CocoMetric',
-    use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
-test_evaluator = dict(
-    type='CocoMetric',
-    use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    metrics=[
+        dict(type='CocoMetric',
+             use_area=True,
+             ann_file=f'{data_root}/annotations/val_annotations.json'),
+    ],
+    )
+
+test_evaluator = val_evaluator
 
 val_cfg = dict()
-test_cfg = dict()
 
+test_cfg = dict()
 
 # data_root = 'data/coco'
 # data = dict(
