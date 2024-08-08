@@ -203,28 +203,45 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             if bbox_ids is not None:
                 bbox_ids.append(img_metas[i]['id'])
 
-        p_joints = p_joints.cpu().numpy()
-        score_pose = score_pose.cpu().numpy()
-        for i in range(p_joints.shape[0]):
-            p_joints[i] = transform_preds(
-                p_joints[i], c[i], s[i], [img.shape[-1], img.shape[-2]], use_udp=False)
+        # p_joints = p_joints.cpu().numpy()
+        # score_pose = score_pose.cpu().numpy()
+        # for i in range(p_joints.shape[0]):
+        #     p_joints[i] = transform_preds(
+        #         p_joints[i], c[i], s[i], [img.shape[-1], img.shape[-2]], use_udp=False)
         
-        all_preds = np.zeros((batch_size, p_joints.shape[1], 3), dtype=np.float32)
-        all_boxes = np.zeros((batch_size, 6), dtype=np.float32)
-        all_preds[:, :, 0:2] = p_joints
-        all_preds[:, :, 2:3] = score_pose
-        all_boxes[:, 0:2] = c[:, 0:2]
-        all_boxes[:, 2:4] = s[:, 0:2]
-        all_boxes[:, 4] = np.prod(s * 200.0, axis=1)
-        all_boxes[:, 5] = score
+        # all_preds = np.zeros((batch_size, p_joints.shape[1], 3), dtype=np.float32)
+        # all_boxes = np.zeros((batch_size, 6), dtype=np.float32)
+        # all_preds[:, :, 0:2] = p_joints
+        # all_preds[:, :, 2:3] = score_pose
+        # all_boxes[:, 0:2] = c[:, 0:2]
+        # all_boxes[:, 2:4] = s[:, 0:2]
+        # all_boxes[:, 4] = np.prod(s * 200.0, axis=1)
+        # all_boxes[:, 5] = score
 
-        final_preds = {}
-        final_preds['preds'] = all_preds
-        final_preds['boxes'] = all_boxes
-        final_preds['image_paths'] = image_paths
-        final_preds['bbox_ids'] = bbox_ids
-        results.update(final_preds)
-        results['output_heatmap'] = None
+        # final_preds = {}
+        # # final_preds['preds'] = all_preds
+        # # final_preds['pred_instances'] = [{'keypoints' : p_joints},
+        # #                                  {'keypoint_scores' : score_pose},
+        # #                                  {'bboxes' : all_boxes[:, :4]}]
+        # final_preds['boxes'] = all_boxes
+        # final_preds['image_paths'] = image_paths
+        # final_preds['bbox_ids'] = bbox_ids
+        # results.update(final_preds)
+        # results['output_heatmap'] = None
+
+        # return results
+        
+        recovered_joints = p_joints.detach().cpu().numpy()
+        # score_pose = score_pose.detach().cpu().numpy()
+
+        ## evaluation을 위해 data_samples에 prediction 추가
+        if isinstance(recovered_joints, tuple):
+            batch_pred_instances, batch_pred_fields = recovered_joints
+        else:
+            batch_pred_instances = recovered_joints
+            batch_pred_fields = None
+
+        results = self.add_pred_to_datasample(batch_pred_instances, batch_pred_fields, data_samples)
 
         return results
 
