@@ -10,16 +10,18 @@ import torch.nn.functional as F
 from mmengine.model import constant_init
 from mmengine.model import normal_init
 from mmpose.models.builder import build_loss
+from mmpose.registry import KEYPOINT_CODECS, MODELS
 from mmpose.models.heads.base_head import BaseHead
 from mmpose.models.heads.heatmap_heads import HeatmapHead
 from mmpose.models.builder import HEADS
 
 from .pct_tokenizer import Tokenizer
 from .modules import MixerLayer, FCBlock, BasicBlock
+from .pct_loss import *
 
 
 @HEADS.register_module()
-class PCT_Head(nn.Module):
+class PCT_Head(HeatmapHead):
     """ Head of Pose Compositional Tokens.
         paper ref: Zigang Geng et al. "Human Pose as
             Compositional Tokens"
@@ -52,14 +54,16 @@ class PCT_Head(nn.Module):
     def __init__(self,
                  stage_pct,
                  in_channels,
-                 out_channels,
                  image_size,
                  num_joints,
                  cls_head=None,
                  tokenizer=None,
-                 loss_keypoint=None,):
-        super().__init__()
-
+                 loss_keypoint=None,
+                 **kwargs):
+        super().__init__(in_channels=in_channels,
+                         out_channels=num_joints,
+                         **kwargs)
+        
         self.image_size = image_size
         self.stage_pct = stage_pct
 
@@ -100,7 +104,9 @@ class PCT_Head(nn.Module):
         self.tokenizer = Tokenizer(
             stage_pct=stage_pct, tokenizer=tokenizer, num_joints=num_joints)
 
-        self.loss = build_loss(loss_keypoint)
+        self.custom_loss = MODELS.build(loss_keypoint)
+        #self.loss = Classifer_loss()
+
         print(f'loss: {self.loss}')
 
     def get_loss(self, p_logits, p_joints, g_logits, joints):
@@ -124,7 +130,7 @@ class PCT_Head(nn.Module):
 
         losses = dict()
         
-        losses['token_loss'], losses['kpt_loss'] = self.loss(p_logits, p_joints, g_logits, joints)
+        losses['token_loss'], losses['kpt_loss'] = self.custom_loss(p_logits, p_joints, g_logits, joints)
 
         unused_losses = []
         for name, loss in losses.items():

@@ -1,7 +1,7 @@
 _base_ = ['./default_runtime.py', './ap10k.py']
 
 max_epochs = 200
-base_lr = 8e-2
+base_lr = 8e-4
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=1)
 #randomness = dict(seed=21)
@@ -115,7 +115,6 @@ model = dict(
         type='PCT_Head',
         stage_pct='classifier',
         in_channels=1024,
-        out_channels=17,
         image_size=data_cfg['image_size'],
         num_joints=channel_cfg['num_output_channels'],
         loss_keypoint=dict(
@@ -270,27 +269,14 @@ test_dataloader = dict(
         metainfo=dict(from_file='configs/ap10k.py')
     ))
 
-# evaluators
-# val_evaluator = dict(
-#     _scope_="mmdet",
-#     type='CocoMetric',
-#     metric='bbox',
-#     ann_file=f'{data_root}/annotations/val_annotations_1.json')
-
-# test_evaluator = dict(
-#     _scope_="mmdet",
-#     type='CocoMetric',
-#     metric='bbox',
-#     ann_file=f'{data_root}/annotations/val_annotations_1.json')
-
 val_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 test_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 
 val_cfg = dict()
 

@@ -79,7 +79,7 @@ class Classifer_loss(nn.Module):
             losses.append(None)
         
         if self.joint_loss_w > 0:
-            joint_loss = self.joint_loss(p_joints, joints)
+            joint_loss = self.joint_loss(p_joints, joints) # pred, gt poses
             joint_loss *= self.joint_loss_w
             losses.append(joint_loss)
         else:

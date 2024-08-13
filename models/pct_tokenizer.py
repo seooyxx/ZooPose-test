@@ -190,37 +190,54 @@ class Tokenizer(nn.Module):
 
     def forward(self, joints, joints_feature, cls_logits, train=True):
         """Forward function. """
+        if train or self.stage_pct == "tokenizer":
+            # Encoder of Tokenizer, Get the PCT groundtruth class labels.
+            joints_coord, joints_visible, bs \
+                = joints[:,:,:-1], joints[:,:,-1].bool(), joints.shape[0]
 
-        # Encoder of Tokenizer, Get the PCT groundtruth class labels.
-        joints_coord, joints_visible, bs \
-            = joints[:,:,:-1], joints[:,:,-1].bool(), joints.shape[0]
+            encode_feat = self.start_embed(joints_coord)
 
-        encode_feat = self.start_embed(joints_coord)
+            if train and self.stage_pct == "tokenizer":
+                rand_mask_ind = torch.rand(
+                    joints_visible.shape, device=joints_visible.device) > self.drop_rate
+                joints_visible = torch.logical_and(rand_mask_ind, joints_visible) 
 
-        if train and self.stage_pct == "tokenizer":
-            rand_mask_ind = torch.rand(
-                joints_visible.shape, device=joints_visible.device) > self.drop_rate
-            joints_visible = torch.logical_and(rand_mask_ind, joints_visible) 
+            mask_tokens = self.invisible_token.expand(bs, joints.shape[1], -1)
+            w = joints_visible.unsqueeze(-1).type_as(mask_tokens)
+            encode_feat = encode_feat * w + mask_tokens * (1 - w)
 
-        mask_tokens = self.invisible_token.expand(bs, joints.shape[1], -1)
-        w = joints_visible.unsqueeze(-1).type_as(mask_tokens)
-        encode_feat = encode_feat * w + mask_tokens * (1 - w)
+            # encoder
+            for num_layer in self.encoder:
+                encode_feat = num_layer(encode_feat)
+            encode_feat = self.encoder_layer_norm(encode_feat)
+            
+            encode_feat = encode_feat.transpose(2, 1)
+            encode_feat = self.token_mlp(encode_feat).transpose(2, 1)
+            encode_feat = self.feature_embed(encode_feat).flatten(0,1)
+            
+            # decoder & codebook
+            part_token_feat, encodings, encoding_indices, recoverd_joints = \
+                self.decoder(encode_feat, device=joints.device, bs=bs)
+            # update codebook
+            e_latent_loss = self.decoder.codebook_update(
+                encodings, encode_feat, part_token_feat) if train else None
+        #Fix decoder network to not update during stage-2 training
+        else: # self.stage_pct == 'classifier'
+            bs = cls_logits.shape[0] // self.token_num
+            encoding_indices = None
+            part_token_feat = torch.matmul(cls_logits, self.decoder.codebook)
+            e_latent_loss = None
 
-        # encoder
-        for num_layer in self.encoder:
-            encode_feat = num_layer(encode_feat)
-        encode_feat = self.encoder_layer_norm(encode_feat)
-        
-        encode_feat = encode_feat.transpose(2, 1)
-        encode_feat = self.token_mlp(encode_feat).transpose(2, 1)
-        encode_feat = self.feature_embed(encode_feat).flatten(0,1)
-        
-        # decoder & codebook
-        part_token_feat, encodings, encoding_indices, recoverd_joints = \
-            self.decoder(encode_feat, device=joints.device, bs=bs)
-        # update codebook
-        e_latent_loss = self.decoder.codebook_update(
-            encodings, encode_feat, part_token_feat) if train else None
+            part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
+            part_token_feat = part_token_feat.transpose(2,1)
+            part_token_feat = self.decoder.token_mlp(part_token_feat).transpose(2,1)
+            decode_feat = self.decoder.decoder_start(part_token_feat)
+
+            for num_layer in self.decoder.decoder_layers:
+                decode_feat = num_layer(decode_feat)
+            decode_feat = self.decoder.layer_norm(decode_feat)
+
+            recoverd_joints = self.decoder.recover_embed(decode_feat)
 
 
         return recoverd_joints, encoding_indices, e_latent_loss
