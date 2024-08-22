@@ -45,7 +45,7 @@ class Tokenizer_loss(nn.Module):
         self.e_loss_w = e_loss_w
 
     def forward(self, output_joints, joints, e_latent_loss):
-
+        
         losses = []
         joint_loss = self.joint_loss(output_joints, joints)
         joint_loss *= self.joint_loss_w
@@ -70,6 +70,8 @@ class Classifer_loss(nn.Module):
 
     def forward(self, p_logits, p_joints, g_logits, joints):
 
+        p_logits = p_logits.view(-1, p_logits.size(-1))  # [N*M, V]로 변환
+        g_logits = g_logits.view(-1)  # [N*M]으로 변환
         losses = []
         if self.token_loss_w > 0:
             token_loss = self.token_loss(p_logits, g_logits)

@@ -127,7 +127,10 @@ class PCT_Head(HeatmapHead):
                 and groundtruth joints.
             joints(torch.Tensor[NxKx3]): Groundtruth joints.
         """
-
+        # print(f"p_logits shape: {p_logits.shape}")
+        # print(f"p_joints shape: {p_joints.shape}")
+        # print(f"g_logits shape: {g_logits.shape}")
+        # print(f"joints shape: {joints.shape}")
         losses = dict()
         
         losses['token_loss'], losses['kpt_loss'] = self.custom_loss(p_logits, p_joints, g_logits, joints)
@@ -157,10 +160,11 @@ class PCT_Head(HeatmapHead):
             cls_feat = self.mixer_norm_layer(cls_feat)
 
             cls_logits = self.cls_pred_layer(cls_feat)
+            cls_logits = cls_logits.view(batch_size, self.token_num, -1)
 
             encoding_scores = cls_logits.topk(1, dim=2)[0]
-            cls_logits = cls_logits.flatten(0,1)
-            cls_logits_softmax = cls_logits.clone().softmax(1)
+            # cls_logits = cls_logits.flatten(0,1)
+            cls_logits_softmax = cls_logits.clone().softmax(2) # 1->2
         else:
             encoding_scores = None
             cls_logits = None
@@ -174,8 +178,12 @@ class PCT_Head(HeatmapHead):
 
         output_joints, cls_label, e_latent_loss = \
             self.tokenizer(joints, joints_feat, cls_logits_softmax, train)
+        
+        if cls_label is not None:
+            cls_label = cls_label.view(batch_size, self.token_num)
 
         if train:
+            #        p_logits, p_joints, g_logits, e_latent_loss
             return cls_logits, output_joints, cls_label, e_latent_loss
         else:
             return output_joints, encoding_scores

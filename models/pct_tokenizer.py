@@ -223,9 +223,12 @@ class Tokenizer(nn.Module):
                 encodings, encode_feat, part_token_feat) if train else None
         #Fix decoder network to not update during stage-2 training
         else: # self.stage_pct == 'classifier'
-            bs = cls_logits.shape[0] // self.token_num
+            print(f'cls_logits.shape: {cls_logits.shape}')
+            bs = cls_logits.shape[0]
+            print(f'bs: {bs}')
             encoding_indices = None
             part_token_feat = torch.matmul(cls_logits, self.decoder.codebook)
+            print(f'part_token_feat: {part_token_feat.shape}')
             e_latent_loss = None
 
             part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
@@ -254,6 +257,9 @@ class Tokenizer(nn.Module):
             joints(torch.Tensor[NxKx3]): Target joints.
             e_latent_loss(torch.Tensor[1]): Loss for training codebook.
         """
+        print(f"p_logits(output_joints) shape: {output_joints.shape}")
+        print(f"joints shape: {joints.shape}")
+        print(f"e_latent_loss shape: {e_latent_loss.shape}")
 
         losses = dict()
 
