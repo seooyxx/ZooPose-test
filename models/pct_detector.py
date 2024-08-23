@@ -155,7 +155,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         p_joints, encoding_scores = self.keypoint_head(output, extra_output, joints, train=False)
         score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
             encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
-        
+
         if self.flip_test:
             FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
                     'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
@@ -164,12 +164,10 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                     'AP10K':[1, 0, 2, 3, 4, 8, 9, 10, 5, 6, 7, 14, 15, 16, 11, 12, 13]}
 
             img_flipped = img.flip(3)
-    
+
             features_flipped = None if self.stage_pct == "tokenizer" \
                 else self.backbone(img_flipped) 
-            extra_output_flipped = None 
-            # extra_output_flipped = self.extra_backbone(img_flipped) \
-            #     if self.image_guide and self.stage_pct == "tokenizer" else None
+            extra_output_flipped = None
 
             if joints is not None:
                 joints_flipped = joints.clone()
@@ -177,7 +175,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                 joints_flipped[:,:,0] = img.shape[-1] - 1 - joints_flipped[:,:,0]
             else:
                 joints_flipped = None
-
+                
             p_joints_f, encoding_scores_f = \
                 self.keypoint_head(features_flipped, \
                     extra_output_flipped, joints_flipped, train=False)
@@ -193,14 +191,12 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
         batch_size = len(img_metas)
 
-        # if 'bbox_id' in img_metas[0]:
         bbox_ids = [] if 'id' in img_metas[0] else None
 
         c = np.zeros((batch_size, 2), dtype=np.float32)
         s = np.zeros((batch_size, 2), dtype=np.float32)
         image_paths = []
         score = np.ones(batch_size)
-
         for i in range(batch_size):
             c[i, :] = img_metas[i]['input_center']
             s[i, :] = img_metas[i]['input_scale']
@@ -226,18 +222,25 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         # all_boxes[:, 4] = np.prod(s * 200.0, axis=1)
         # all_boxes[:, 5] = score
 
-        # final_preds = {}
+        # # final_preds = {}
         # # final_preds['preds'] = all_preds
-        # # final_preds['pred_instances'] = [{'keypoints' : p_joints},
-        # #                                  {'keypoint_scores' : score_pose},
-        # #                                  {'bboxes' : all_boxes[:, :4]}]
-        # final_preds['boxes'] = all_boxes
-        # final_preds['image_paths'] = image_paths
-        # final_preds['bbox_ids'] = bbox_ids
-        # results.update(final_preds)
-        # results['output_heatmap'] = None
+        # # final_preds['boxes'] = all_boxes
+        # # final_preds['image_paths'] = image_paths
+        # # final_preds['bbox_ids'] = bbox_ids
+        # # results.update(final_preds)
+        # # results['output_heatmap'] = None
 
-        # return results
+        # # return results
+        # for i in range(batch_size):
+        #     pred_instances = InstanceData()
+        #     pred_instances.keypoints = all_preds[i, :, 0:2]
+        #     pred_instances.keypoint_scores = all_preds[i, :, 2]
+        #     pred_instances.bboxes = all_boxes[i, :4]
+        #     pred_instances.bbox_scores = all_boxes[i, 5]
+
+        #     data_samples[i].pred_instances = pred_instances
+
+        # return data_samples    
         
         recovered_joints = p_joints.detach().cpu().numpy()
         # score_pose = score_pose.detach().cpu().numpy()
@@ -337,8 +340,9 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                         pred_fields.set_field(value[output_keypoint_indices], key)
                 data_sample.pred_fields = pred_fields
 
-        return batch_data_samples
-    
+        return data_sample
+
+
 def transform_preds(coords, center, scale, output_size, use_udp=False):
     """Get final keypoint predictions from heatmaps and apply scaling and
     translation to map them back to the image.

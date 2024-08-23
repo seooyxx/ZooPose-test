@@ -163,6 +163,7 @@ class PCT_Head(HeatmapHead):
             cls_logits = cls_logits.view(batch_size, self.token_num, -1)
 
             encoding_scores = cls_logits.topk(1, dim=2)[0]
+            # print(f'encoding_scores: {encoding_scores.shape}')
             # cls_logits = cls_logits.flatten(0,1)
             cls_logits_softmax = cls_logits.clone().softmax(2) # 1->2
         else:

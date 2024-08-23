@@ -241,8 +241,9 @@ class Tokenizer(nn.Module):
             decode_feat = self.decoder.layer_norm(decode_feat)
 
             recoverd_joints = self.decoder.recover_embed(decode_feat)
+            print(f'recoverd_joints: {recoverd_joints.shape}')
 
-
+                # output_joints, cls_label, e_latent_loss
         return recoverd_joints, encoding_indices, e_latent_loss
 
     def get_loss(self, output_joints, joints, e_latent_loss):
