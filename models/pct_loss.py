@@ -20,6 +20,7 @@ class JointS1Loss(nn.Module):
         l1_loss = torch.abs(pred - gt)
         cond = l1_loss < self.beta
         loss = torch.where(cond, 0.5*l1_loss**2/self.beta, l1_loss-0.5*self.beta)
+        # print(f'smooth_l1_loss: l1_loss = {l1_loss.shape} , loss = {loss.shape}')
         return loss
 
     def forward(self, pred, gt):
@@ -27,9 +28,14 @@ class JointS1Loss(nn.Module):
         joint_dim = gt.shape[2] - 1
         visible = gt[..., joint_dim:]
         pred, gt = pred[..., :joint_dim], gt[..., :joint_dim]
- 
+        # print(f'JointS1Loss: joint_dim = {joint_dim} , visible = {visible.shape}')
+        # print('pred, gt = pred[..., :joint_dim], gt[..., :joint_dim]')
+        # print(f'pred = [{pred.shape}')
+        # print(f'gt = [{gt.shape}]')
+
         loss = self.smooth_l1_loss(pred, gt) * visible
         loss = loss.mean(dim=2).mean(dim=1).mean(dim=0)
+        # print(f'loss: {loss}')
 
         return loss
 
@@ -58,7 +64,7 @@ class Tokenizer_loss(nn.Module):
 
 
 @LOSSES.register_module()
-class Classifer_loss(nn.Module):
+class Classifier_loss(nn.Module):
     def __init__(self, token_loss=1.0, joint_loss=1.0, beta=0.05):
         super().__init__()
 
@@ -69,9 +75,16 @@ class Classifer_loss(nn.Module):
         self.joint_loss_w = joint_loss
 
     def forward(self, p_logits, p_joints, g_logits, joints):
+        batch_size, num_tokens, _ = p_logits.shape
+        batch_size, num_keypoints, _ = p_joints.shape
+        p_logits = p_logits.view(batch_size * num_tokens, -1)  # [N*M, V]로 변환
+        g_logits = g_logits.view(batch_size * num_tokens)  # [N*M]으로 변환
 
-        p_logits = p_logits.view(-1, p_logits.size(-1))  # [N*M, V]로 변환
-        g_logits = g_logits.view(-1)  # [N*M]으로 변환
+        # p_joints = p_joints.view(batch_size * num_keypoints, -1)
+        # p_joints = p_joints.view(batch_size * num_keypoints, -1)
+
+        # print(f'p_logits: {p_logits.shape}, g_logits: {g_logits.shape}')
+
         losses = []
         if self.token_loss_w > 0:
             token_loss = self.token_loss(p_logits, g_logits)
@@ -86,5 +99,6 @@ class Classifer_loss(nn.Module):
             losses.append(joint_loss)
         else:
             losses.append(None)
+        # print(f'classifier loss: {losses}')
             
         return losses

@@ -58,41 +58,43 @@ class CodebookDecoder(nn.Module):
         self.ema_w.data.normal_()  
 
 
-    def forward(self, encode_feat, device, bs):
+    def forward(self, encode_feat, device, bs, train):
+        if train or self.stage_pct == "tokenizer":
+            distances = torch.sum(encode_feat**2, dim=1, keepdim=True) \
+                + torch.sum(self.codebook**2, dim=1) \
+                - 2 * torch.matmul(encode_feat, self.codebook.t())
+            
+            # find the closest encoding indicies
+            encoding_indices = torch.argmin(distances, dim=1)
+            encodings = torch.zeros(
+                encoding_indices.shape[0], self.token_class_num, device=device)
+            encodings.scatter_(1, encoding_indices.unsqueeze(1), 1)
+        else:
+            encoding_indices = None
 
-        # need: encode_feat
-        # codebook
-        distances = torch.sum(encode_feat**2, dim=1, keepdim=True) \
-            + torch.sum(self.codebook**2, dim=1) \
-            - 2 * torch.matmul(encode_feat, self.codebook.t())
-        
-        # find the closest encoding indicies
-        encoding_indices = torch.argmin(distances, dim=1)
-        encodings = torch.zeros(
-            encoding_indices.shape[0], self.token_class_num, device=device)
-        encodings.scatter_(1, encoding_indices.unsqueeze(1), 1)
+        return distances, encoding_indices, encodings
 
-        part_token_feat = torch.matmul(encodings, self.codebook)
-        part_token_feat = encode_feat + (part_token_feat - encode_feat).detach()
+            # part_token_feat = torch.matmul(encodings, self.codebook)
+            # part_token_feat = encode_feat + (part_token_feat - encode_feat).detach()
 
-        # return part_token_feat, encodings, encoding_indices
-        original_part_token_feat = part_token_feat.clone()
+            # # return part_token_feat, encodings, encoding_indices
+            # original_part_token_feat = part_token_feat.clone()
 
-        # decoding part, recover joints
-        part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
-        part_token_feat = part_token_feat.transpose(2,1)
-        part_token_feat = self.token_mlp(part_token_feat).transpose(2,1)
-        decode_feat = self.decoder_start(part_token_feat)
+            # # decoding part, recover joints
+            # part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
+            # part_token_feat = part_token_feat.transpose(2,1)
+            # part_token_feat = self.token_mlp(part_token_feat).transpose(2,1)
+            # decode_feat = self.decoder_start(part_token_feat)
 
-        for num_layer in self.decoder_layers:
-            decode_feat = num_layer(decode_feat)
-        decode_feat = self.layer_norm(decode_feat)
+            # for num_layer in self.decoder_layers:
+            #     decode_feat = num_layer(decode_feat)
+            # decode_feat = self.layer_norm(decode_feat)
 
-        recoverd_joints = self.recover_embed(decode_feat)
+            # recoverd_joints = self.recover_embed(decode_feat)
 
-        # return recovered joints
-        return original_part_token_feat, encodings, \
-            encoding_indices, recoverd_joints
+            # # return recovered joints
+            # return original_part_token_feat, encodings, \
+            #     encoding_indices, recoverd_joints
 
 
     def codebook_update(self, encodings, encode_feat, part_token_feat):
@@ -123,8 +125,9 @@ class CodebookDecoder(nn.Module):
         
         # calculate the loss
         e_latent_loss = F.mse_loss(part_token_feat.detach(), encode_feat)
+        part_token_feat = encode_feat + (part_token_feat - encode_feat).detach()
 
-        return e_latent_loss
+        return e_latent_loss, part_token_feat
 
 @HEADS.register_module()
 class Tokenizer(nn.Module):
@@ -215,36 +218,68 @@ class Tokenizer(nn.Module):
             encode_feat = self.token_mlp(encode_feat).transpose(2, 1)
             encode_feat = self.feature_embed(encode_feat).flatten(0,1)
             
-            # decoder & codebook
-            part_token_feat, encodings, encoding_indices, recoverd_joints = \
-                self.decoder(encode_feat, device=joints.device, bs=bs)
-            # update codebook
-            e_latent_loss = self.decoder.codebook_update(
-                encodings, encode_feat, part_token_feat) if train else None
-        #Fix decoder network to not update during stage-2 training
-        else: # self.stage_pct == 'classifier'
-            print(f'cls_logits.shape: {cls_logits.shape}')
+            # # decoder & codebook
+            # part_token_feat, encodings, encoding_indices, recoverd_joints = \
+            #     self.decoder(encode_feat, device=joints.device, bs=bs, train=train)
+            # # update codebook
+            # e_latent_loss = self.decoder.codebook_update(
+            #     encodings, encode_feat, part_token_feat) if train else None
+            
+            distances, encoding_indices, encodings = \
+                self.decoder(encode_feat, device=joints.device, bs=bs, train=train)
+            
+        else:
             bs = cls_logits.shape[0]
-            print(f'bs: {bs}')
             encoding_indices = None
+
+        if self.stage_pct == "classifier":
             part_token_feat = torch.matmul(cls_logits, self.decoder.codebook)
-            print(f'part_token_feat: {part_token_feat.shape}')
+        else:
+            part_token_feat = torch.matmul(encodings, self.decoder.codebook)
+        
+        if train and self.stage_pct == "tokenizer":
+            e_latent_loss, part_token_feat = self.decoder.codebook_update(
+                encodings, encode_feat, part_token_feat)
+        else:
             e_latent_loss = None
 
-            part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
-            part_token_feat = part_token_feat.transpose(2,1)
-            part_token_feat = self.decoder.token_mlp(part_token_feat).transpose(2,1)
-            decode_feat = self.decoder.decoder_start(part_token_feat)
+        part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
+        part_token_feat = part_token_feat.transpose(2,1)
+        part_token_feat = self.decoder.token_mlp(part_token_feat).transpose(2,1)
+        decode_feat = self.decoder.decoder_start(part_token_feat)
 
-            for num_layer in self.decoder.decoder_layers:
-                decode_feat = num_layer(decode_feat)
-            decode_feat = self.decoder.layer_norm(decode_feat)
+        for num_layer in self.decoder.decoder_layers:
+            decode_feat = num_layer(decode_feat)
+        decode_feat = self.decoder.layer_norm(decode_feat)
 
-            recoverd_joints = self.decoder.recover_embed(decode_feat)
-            print(f'recoverd_joints: {recoverd_joints.shape}')
+        recoverd_joints = self.decoder.recover_embed(decode_feat)
+        # print(f'recoverd_joints: {recoverd_joints.shape}')
+        return recoverd_joints, encoding_indices, e_latent_loss
+
+            
+        #Fix decoder network to not update during stage-2 training
+        # else: # self.stage_pct == 'classifier'
+        #     print(f'cls_logits.shape: {cls_logits.shape}')
+        #     bs = cls_logits.shape[0]
+        #     print(f'bs: {bs}')
+        #     encoding_indices = None
+        #     part_token_feat = torch.matmul(cls_logits, self.decoder.codebook)
+        #     print(f'part_token_feat: {part_token_feat.shape}')
+        #     e_latent_loss = None
+
+        #     part_token_feat = part_token_feat.view(bs, -1, self.token_dim)
+        #     part_token_feat = part_token_feat.transpose(2,1)
+        #     part_token_feat = self.decoder.token_mlp(part_token_feat).transpose(2,1)
+        #     decode_feat = self.decoder.decoder_start(part_token_feat)
+
+        #     for num_layer in self.decoder.decoder_layers:
+        #         decode_feat = num_layer(decode_feat)
+        #     decode_feat = self.decoder.layer_norm(decode_feat)
+
+        #     recoverd_joints = self.decoder.recover_embed(decode_feat)
+        #     print(f'recoverd_joints: {recoverd_joints.shape}')
 
                 # output_joints, cls_label, e_latent_loss
-        return recoverd_joints, encoding_indices, e_latent_loss
 
     def get_loss(self, output_joints, joints, e_latent_loss):
         """Calculate loss for training tokenizer.
@@ -258,9 +293,9 @@ class Tokenizer(nn.Module):
             joints(torch.Tensor[NxKx3]): Target joints.
             e_latent_loss(torch.Tensor[1]): Loss for training codebook.
         """
-        print(f"p_logits(output_joints) shape: {output_joints.shape}")
-        print(f"joints shape: {joints.shape}")
-        print(f"e_latent_loss shape: {e_latent_loss.shape}")
+        # print(f"p_logits(output_joints) shape: {output_joints.shape}")
+        # print(f"joints shape: {joints.shape}")
+        # print(f"e_latent_loss shape: {e_latent_loss.shape}")
 
         losses = dict()
 
@@ -281,6 +316,11 @@ class Tokenizer(nn.Module):
         buffers_names = set()
         for name, _ in self.named_buffers():
             buffers_names.add(name)
+
+        flag = os.path.isfile(pretrained)
+        head_test = pretrained
+        print(f'keypoint_head: {flag}')
+        print(f'keypoint_head: {head_test}')
 
         if os.path.isfile(pretrained):
             assert (self.stage_pct == "classifier"), \

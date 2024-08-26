@@ -20,7 +20,7 @@ from .pct_tokenizer import Tokenizer ## PCT tokenizer for STAGE I
 from models import build_backbone, build_head
 
 from mmengine.structures import InstanceData, PixelData
-
+import os
 
 @MODELS.register_module()
 class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
@@ -39,8 +39,9 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         assert self.stage_pct in ["tokenizer", "classifier"]
        
         self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=keypoint_head['tokenizer'])
-        #self.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
-        self.tokenizer.init_weights(pretrained="")
+        self.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
+
+        # self.tokenizer.init_weights(pretrained="")
 
         if self.stage_pct == "tokenizer":
             # For training tokenizer
@@ -141,53 +142,53 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         """Defines the computation performed at every call when testing."""
         assert img.size(0) == len(img_metas)  # Ensure img size matches img_metas length
         results = {}
-        print(f"img shape: {type(img)}, {img.shape}")
+        # print(f"img shape: {type(img)}, {img.shape}")
 
         batch_size, _, img_height, img_width = img.shape
         if batch_size > 1:
             assert 'id' in img_metas[0]
-            
+
         output = None if self.stage_pct == "tokenizer" else self.backbone(img) 
         extra_output = None
         # extra_output = self.extra_backbone(img) \
         #     if self.image_guide and self.stage_pct == "tokenizer" else None
-        print(f'joints shape: {joints.shape}')
+        # print(f'joints shape: {joints.shape}')
         p_joints, encoding_scores = self.keypoint_head(output, extra_output, joints, train=False)
         score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
             encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
-        if self.flip_test:
-            FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
-                    'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
-                    'OCCLUSIONPERSON':[0, 4, 5, 6, 1, 2, 3, 7, 8, 12, 13, 14, 9, 10, 11],\
-                    'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],\
-                    'AP10K':[1, 0, 2, 3, 4, 8, 9, 10, 5, 6, 7, 14, 15, 16, 11, 12, 13]}
+        # if self.flip_test:
+        #     FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
+        #             'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
+        #             'OCCLUSIONPERSON':[0, 4, 5, 6, 1, 2, 3, 7, 8, 12, 13, 14, 9, 10, 11],\
+        #             'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],\
+        #             'AP10K':[1, 0, 2, 3, 4, 8, 9, 10, 5, 6, 7, 14, 15, 16, 11, 12, 13]}
 
-            img_flipped = img.flip(3)
+        #     img_flipped = img.flip(3)
 
-            features_flipped = None if self.stage_pct == "tokenizer" \
-                else self.backbone(img_flipped) 
-            extra_output_flipped = None
+        #     features_flipped = None if self.stage_pct == "tokenizer" \
+        #         else self.backbone(img_flipped) 
+        #     extra_output_flipped = None
 
-            if joints is not None:
-                joints_flipped = joints.clone()
-                joints_flipped = joints_flipped[:,FLIP_INDEX[self.dataset_name],:]
-                joints_flipped[:,:,0] = img.shape[-1] - 1 - joints_flipped[:,:,0]
-            else:
-                joints_flipped = None
+        #     if joints is not None:
+        #         joints_flipped = joints.clone()
+        #         joints_flipped = joints_flipped[:,FLIP_INDEX[self.dataset_name],:]
+        #         joints_flipped[:,:,0] = img.shape[-1] - 1 - joints_flipped[:,:,0]
+        #     else:
+        #         joints_flipped = None
                 
-            p_joints_f, encoding_scores_f = \
-                self.keypoint_head(features_flipped, \
-                    extra_output_flipped, joints_flipped, train=False)
+        #     p_joints_f, encoding_scores_f = \
+        #         self.keypoint_head(features_flipped, \
+        #             extra_output_flipped, joints_flipped, train=False)
 
-            p_joints_f = p_joints_f[:,FLIP_INDEX[self.dataset_name],:]
-            p_joints_f[:,:,0] = img.shape[-1] - 1 - p_joints_f[:,:,0]
+        #     p_joints_f = p_joints_f[:,FLIP_INDEX[self.dataset_name],:]
+        #     p_joints_f[:,:,0] = img.shape[-1] - 1 - p_joints_f[:,:,0]
 
-            score_pose_f = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
-                encoding_scores_f.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
+        #     score_pose_f = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
+        #         encoding_scores_f.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
-            p_joints = (p_joints + p_joints_f)/2.0
-            score_pose = (score_pose + score_pose_f)/2.0
+        #     p_joints = (p_joints + p_joints_f)/2.0
+        #     score_pose = (score_pose + score_pose_f)/2.0
 
         batch_size = len(img_metas)
 
@@ -303,7 +304,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
             ##
             pred_instances = InstanceData()
-            # exapand instance dimension (17, 2) => (1, 17, 2)
+            # expand instance dimension (17, 2) => (1, 17, 2)
             pred_instances.set_field(np.expand_dims(prediction, axis=0), "keypoints")
             pred_instances.set_field(np.expand_dims(sc, axis=0), "keypoint_scores")
 
@@ -340,7 +341,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                         pred_fields.set_field(value[output_keypoint_indices], key)
                 data_sample.pred_fields = pred_fields
 
-        return data_sample
+        return batch_data_samples
 
 
 def transform_preds(coords, center, scale, output_size, use_udp=False):

@@ -104,10 +104,9 @@ class PCT_Head(HeatmapHead):
         self.tokenizer = Tokenizer(
             stage_pct=stage_pct, tokenizer=tokenizer, num_joints=num_joints)
 
-        self.custom_loss = MODELS.build(loss_keypoint)
+        #self.custom_loss = MODELS.build(loss_keypoint)
         #self.loss = Classifer_loss()
-
-        print(f'loss: {self.loss}')
+        self.custom_loss = build_loss(loss_keypoint)
 
     def get_loss(self, p_logits, p_joints, g_logits, joints):
         """Calculate loss for training classifier.
@@ -137,6 +136,7 @@ class PCT_Head(HeatmapHead):
 
         unused_losses = []
         for name, loss in losses.items():
+            # print(name)
             if loss == None:
                 unused_losses.append(name)
         for unused_loss in unused_losses:

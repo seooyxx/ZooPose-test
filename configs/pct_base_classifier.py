@@ -118,7 +118,7 @@ model = dict(
         image_size=data_cfg['image_size'],
         num_joints=channel_cfg['num_output_channels'],
         loss_keypoint=dict(
-            type='Classifer_loss',
+            type='Classifier_loss',
             token_loss=1.0,
             joint_loss=1.0),
         cls_head=dict(
@@ -239,7 +239,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=32,
-    num_workers=8,
+    num_workers=4,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
@@ -255,7 +255,7 @@ val_dataloader = dict(
 
 test_dataloader = dict(
     batch_size=32,
-    num_workers=8,
+    num_workers=4,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
@@ -278,9 +278,9 @@ test_evaluator = dict(
     use_area=True,
     ann_file=f'{data_root}/annotations/val_annotations.json')
 
-val_cfg = dict()
+# val_cfg = dict()
 
-test_cfg = dict()
+# test_cfg = dict()
 
 # data_root = 'data/coco'
 # data = dict(
