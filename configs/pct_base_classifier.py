@@ -193,7 +193,7 @@ train_pipeline = [
                 p=1.),
         ]),
   
-    # dict(type='GenerateTarget', encoder=codec),
+    dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
@@ -232,7 +232,7 @@ train_dataloader = dict(
         type=dataset_type, 
         data_root=data_root,
         ann_file='annotations/train_annotations.json',
-        data_prefix=dict(img=''),
+        data_prefix=dict(img='data'),
         pipeline=train_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
     ))
@@ -247,7 +247,7 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file='annotations/val_annotations.json',
-        data_prefix=dict(img=''),
+        data_prefix=dict(img='data'),
         test_mode=True,
         pipeline=val_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
@@ -263,7 +263,7 @@ test_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file='annotations/test_annotations.json',
-        data_prefix=dict(img=''),
+        data_prefix=dict(img='data'),
         test_mode=True,
         pipeline=val_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
