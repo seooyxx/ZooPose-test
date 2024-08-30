@@ -6,6 +6,7 @@ import mmcv
 
 from itertools import zip_longest
 from typing import Optional
+from torch import Tensor
 
 # from mmengine.registry import MODELS
 from mmpose.registry import MODELS
@@ -22,30 +23,28 @@ from models import build_backbone, build_head
 from mmengine.structures import InstanceData, PixelData
 import os
 
-import logging
-
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(), 
-        logging.FileHandler('logfile.log'),
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
-
 @MODELS.register_module()
-class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
+class PCT_PE(BasePoseEstimator):  ## BasePoseEstimator 대신 BaseModel 상속
     def __init__(self,
                   backbone,
+                  neck: OptConfigType = None,
                   keypoint_head=None,
+                  train_cfg: OptConfigType = None,
                   test_cfg=None,
                   data_preprocessor=None,
                   init_cfg=None,
+                  metainfo: Optional[dict] = None,
                   pretrained=None):
-        super().__init__()
+        super().__init__(
+            backbone=backbone,
+            neck=neck,
+            head=keypoint_head,
+            train_cfg=train_cfg,
+            test_cfg=test_cfg,
+            data_preprocessor=data_preprocessor,
+            init_cfg=init_cfg,
+            metainfo=metainfo
+            )
         
         self.test_cfg = test_cfg if test_cfg else {}
 
@@ -55,29 +54,51 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         self.tokenizer = Tokenizer(stage_pct=self.stage_pct, tokenizer=keypoint_head['tokenizer'])
         self.tokenizer.init_weights(pretrained="keypoint_head['tokenizer']['ckpt']")
 
-        # self.tokenizer.init_weights(pretrained="")
-
         if self.stage_pct == "tokenizer":
-            # For training tokenizer
             keypoint_head['loss_keypoint'] \
                 = keypoint_head['tokenizer']['loss_keypoint']
                 
         if self.stage_pct == "classifier":
-            # For training classifier
             self.keypoint_head = build_head(keypoint_head)
             self.keypoint_head.init_weights()
             self.keypoint_head.tokenizer.init_weights(pretrained=keypoint_head['tokenizer']['ckpt'])
             
-            # backbone is only needed for training classifier
             self.backbone = build_backbone(backbone)
             self.backbone.init_weights(pretrained)
 
         self.flip_test = test_cfg.get('flip_test', True)
         self.dataset_name = test_cfg.get('dataset_name', 'AP10K')
+            
 
-    def forward(self, inputs, data_samples, mode: str = 'tensor'): # -> ForwardResults:
-        # print(f'Input Image test: {type(inputs), len(inputs)}')
-        # print(f'Input element -> Input[0].shape == {inputs[0].shape}')
+    def loss(self, inputs: Tensor, data_samples: SampleList) -> dict:
+        # print(f'loss Input Image test: {type(inputs), len(inputs)}')
+        # print(f'loss Input element -> Input[0].shape == {inputs[0].shape}')
+        DEVICE = next(self.parameters()).device
+        if isinstance(inputs, list):
+            inputs = torch.stack(inputs, dim=0).to(DEVICE)
+
+        if inputs.dtype != torch.float32:
+            inputs = inputs.float()
+        # print(f'Stacked Input shape: {type(inputs)}, {inputs.shape}')
+        img_metas, joints_3d, joints_3d_visible = [], [], []
+
+        for sample in data_samples:
+            img_metas.append(sample.metainfo)
+            joints_3d.append(torch.tensor(sample.gt_instances.transformed_keypoints))
+            joints_3d_visible.append(torch.tensor(sample.gt_instances.keypoints_visible))
+
+        joints_3d = torch.cat(joints_3d, dim=0).to(DEVICE)
+        joints_3d_visible = torch.cat(joints_3d_visible, dim=0).to(DEVICE)
+
+        joints_3d_visible = joints_3d_visible.unsqueeze(-1)
+        joints = torch.cat((joints_3d, joints_3d_visible), dim=-1)
+
+        return self.forward_train(inputs, joints, img_metas)
+    
+
+    def predict(self, inputs: Tensor, data_samples: SampleList) -> SampleList:
+        # print(f'predict Input Image test: {type(inputs), len(inputs)}')
+        # print(f'predict Input element -> Input[0].shape == {inputs[0].shape}')
            
         DEVICE = next(self.parameters()).device
         if isinstance(inputs, list):
@@ -103,12 +124,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         # print(f"joints_3d_visible shape: {joints_3d_visible.shape}")
         # print(f"joints shape: {joints.shape}")
 
-        if mode == 'loss':
-            return self.forward_train(inputs, joints, img_metas)
-        elif mode == 'predict':
-            return self.forward_test(inputs, joints, img_metas, data_samples)
-        else:
-            raise ValueError(f"Unsupported mode: {mode}")
+        return self.forward_test(inputs, joints, img_metas, data_samples)
 
     def forward_train(self, inputs, joints, img_metas):
         """Defines the computation performed at every call when training."""
@@ -177,9 +193,9 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
         score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
             encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
-        logger.info("p_joints shape:", p_joints.shape)
-        logger.info("encoding_scores shape:", encoding_scores.shape)
-        logger.info("score_pose shape:", score_pose.shape)
+        print("p_joints shape:", p_joints.shape)
+        print("encoding_scores shape:", encoding_scores.shape)
+        print("score_pose shape:", score_pose.shape)
 
         if self.flip_test:
             FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
@@ -233,7 +249,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                 bbox_ids.append(img_metas[i]['id'])
         
         recovered_joints = p_joints.detach().cpu().numpy()
-        logger.info(f'recovered_joints: {recovered_joints.shape}')
+        print(f'recovered_joints: {recovered_joints.shape}')
         # score_pose = score_pose.detach().cpu().numpy()
 
         ## evaluation을 위해 data_samples에 prediction 추가
@@ -244,14 +260,9 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             batch_pred_fields = None
 
         results = self.add_pred_to_datasample(batch_pred_instances, batch_pred_fields, data_samples)
-        logger.info(f'results: {results}')
+        print(f'results: {results}')
 
         return results
-
-    def show_result(self):
-        # Not implemented
-        return None
-
 
     def add_pred_to_datasample(self, batch_pred_instances: InstanceList,
                                batch_pred_fields: Optional[PixelDataList],
@@ -270,9 +281,7 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             are stored in the ``pred_instances`` field of each data sample.
         """
 
-        # 임시 스코어
         sc = np.ones((17, ))
-
 
         # print(len(batch_pred_instances), len(batch_data_samples))
         assert len(batch_pred_instances) == len(batch_data_samples)
@@ -332,10 +341,10 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
                         pred_fields.set_field(value[output_keypoint_indices], key)
                 data_sample.pred_fields = pred_fields
 
-            logger.info("Current prediction shape:", prediction.shape)
-            logger.info("Current prediction:", prediction)
-            logger.info("Current pred_fields:", pred_fields)
-            logger.info("Current data_sample:", data_sample)
+            print("Current prediction shape:", prediction.shape)
+            print("Current prediction:", prediction)
+            print("Current pred_fields:", pred_fields)
+            print("Current data_sample:", data_sample)
         return batch_data_samples
 
 
